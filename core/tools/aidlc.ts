@@ -1238,7 +1238,7 @@ export function renderHumanHelp(): string {
     "",
     heading("LEARN MORE", out),
     dim(`  Use '${invoke} <command> --help' for more about a command.`, out),
-    dim("  Docs: https://awslabs.github.io/aidlc-workflows/", out),
+    dim("  Docs: https://telgue.github.io/aidlc/", out),
     dim(`  Agents: workflows run through '${invoke} engine' - see '${invoke} engine --help'.`, out),
     "",
   ].join("\n");
