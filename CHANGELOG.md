@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-09-17
+
+First release of this distribution. Version numbering restarts at 1.0.0 so releases from this repository are not confused with the upstream 2.x series; the methodology, stages, agents, and harness surfaces are unchanged. This release adds Microsoft Foundry and Google Vertex AI as first-class model providers alongside Amazon Bedrock, and repoints release discovery, installation, and documentation at this repository. **Upgrade:** reinstall with `install.sh` / `install.ps1` from this repository's releases; an existing install pointed at the previous source will not find these releases via `aidlc update`.
+
+* `aidlc config providers --provider` accepts `amazon-bedrock`, `azure-ai-foundry`, `gcp-vertex-ai`, and `other`. Azure requires `--resource <name>`; Vertex requires `--project <id>` and `--location <region>`; Bedrock continues to use `--region` and `--profile`.
+* Both the `aidlc config` walk and the first-run setup wizard offer the three cloud engines.
+* Switching providers rewrites the Claude engine environment in full, so a previously selected engine cannot remain active through a stale `CLAUDE_CODE_USE_*` variable. Model aliases are repinned to the selected engine's identifiers.
+* Codex gains a generated Azure OpenAI provider block and selection. Google Vertex AI is not wired for Codex because it exposes no OpenAI Responses endpoint; that combination is reported as an outstanding action instead.
+* Kiro writes no provider file for Azure or Vertex: its MCP registry holds AWS tooling servers, and its chat model is selected in the IDE model picker.
+* Each engine reports its own outstanding action: `bedrock-model-access`, `foundry-model-access`, or `vertex-model-access`.
+* `aidlc update`, `install.sh`, and `install.ps1` resolve releases from this repository. `AIDLC_RELEASE_REPOSITORY` still overrides the default.
+* Release provenance is attested to this repository's release workflows. Installers verify against that identity once a release has been published here; until then, SHA-256 checksum verification applies as before.
+
 ## [2.8.2] - 2026-09-10
 
 Preserve summary confirmations when an Assumption Confirmation section is appended with a decorative divider, and improve review-findings table diagnostics so malformed rows report their cell count and expected column order without guessing which column was omitted. The intended development release version is 2.8.2. **Upgrade:** `aidlc update`, or `install.sh --version 2.8.2` / `install.ps1 -Version 2.8.2`. A summary receipt recorded before this fix over a body that already contained the newly excluded divider may need one fresh confirmation after upgrading; no other migration is required.
