@@ -37,7 +37,26 @@ export type RuntimeRecord = {
   cliPath?: string;
 };
 
-export type ProviderKind = "amazon-bedrock" | "other";
+export type ProviderKind =
+  | "amazon-bedrock"
+  | "azure-ai-foundry"
+  | "gcp-vertex-ai"
+  | "other";
+
+/** Cloud engines AIDLC wires up directly, as opposed to the manual "other" path. */
+export const CLOUD_PROVIDER_KINDS = [
+  "amazon-bedrock",
+  "azure-ai-foundry",
+  "gcp-vertex-ai",
+] as const;
+export type CloudProviderKind = (typeof CLOUD_PROVIDER_KINDS)[number];
+
+export const PROVIDER_KINDS = [...CLOUD_PROVIDER_KINDS, "other"] as const;
+
+export function isCloudProvider(value: unknown): value is CloudProviderKind {
+  return CLOUD_PROVIDER_KINDS.includes(value as CloudProviderKind);
+}
+
 export type ProviderPendingStatus = "pending" | "done";
 export type ProviderPendingAction = {
   id: string;
@@ -47,8 +66,16 @@ export type ProviderPendingAction = {
 export type ProvidersRecord = {
   schemaVersion: 1;
   provider?: ProviderKind;
+  /** Amazon Bedrock: AWS region. */
   region?: string;
+  /** Amazon Bedrock: AWS named profile. */
   profile?: string;
+  /** Azure AI Foundry: resource name, used to build the endpoint URL. */
+  resource?: string;
+  /** GCP Vertex AI: Google Cloud project id. */
+  project?: string;
+  /** GCP Vertex AI: region, e.g. us-east5. */
+  location?: string;
   opencodeDefault?: boolean;
   acknowledged?: boolean;
   pendingActions?: ProviderPendingAction[];
@@ -177,6 +204,9 @@ const PROVIDER_KEYS = new Set([
   "provider",
   "region",
   "profile",
+  "resource",
+  "project",
+  "location",
   "opencodeDefault",
   "acknowledged",
   "pendingActions",
@@ -186,6 +216,8 @@ const PROJECT_KEYS = new Set(["schemaVersion", "mcp", "completions"]);
 const SAFE_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
 const PENDING_ACTION_IDS = [
   "bedrock-model-access",
+  "foundry-model-access",
+  "vertex-model-access",
   "kiro-ide-chat-model",
   "copilot-byok-configuration",
   "cursor-provider-configuration",
@@ -203,17 +235,29 @@ export const PROVIDER_PENDING_ACTIONS: Record<
     remediation:
       "Open the Amazon Bedrock console for the recorded region, verify the required Anthropic models are available, and confirm IAM allows bedrock:InvokeModel.",
   },
+  "foundry-model-access": {
+    label:
+      "Verify the configured model deployments exist in the recorded Azure resource and that credentials are available.",
+    remediation:
+      "Open the Azure portal, confirm a deployment exists for each model this harness requests (Claude deployments in Microsoft Foundry for Claude harnesses; an Azure OpenAI deployment for Codex), and provide credentials via ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_FOUNDRY_AUTH_TOKEN, AZURE_OPENAI_API_KEY, or an Entra ID login (az login). Azure has no startup model check, so a wrong deployment name fails at request time.",
+  },
+  "vertex-model-access": {
+    label:
+      "Verify model access in the recorded Vertex AI project and region.",
+    remediation:
+      "Enable the Vertex AI API for the recorded project, request access to the required models in Model Garden for the recorded region, and authenticate with gcloud auth application-default login. Codex is not wired to Vertex automatically because Vertex exposes no OpenAI Responses endpoint; configure a Codex model provider manually.",
+  },
   "kiro-ide-chat-model": {
     label:
-      "Select the intended Amazon Bedrock chat model in the Kiro IDE model picker.",
+      "Select the intended chat model in the Kiro IDE model picker.",
     remediation:
-      "Open Kiro IDE, choose the intended Bedrock model in the chat model picker, then rerun this check.",
+      "Open Kiro IDE, choose the intended model for the configured provider in the chat model picker, then rerun this check.",
   },
   "copilot-byok-configuration": {
     label:
       "Configure GitHub Copilot BYOK provider environment variables for this install.",
     remediation:
-      "Set COPILOT_PROVIDER_BASE_URL and COPILOT_PROVIDER_TYPE=anthropic for the Bedrock-compatible endpoint, then verify the Copilot session uses it.",
+      "Set COPILOT_PROVIDER_BASE_URL and COPILOT_PROVIDER_TYPE=anthropic for the configured provider endpoint, then verify the Copilot session uses it.",
   },
   "cursor-provider-configuration": {
     label:
@@ -232,6 +276,76 @@ export const PROVIDER_PENDING_ACTIONS: Record<
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+
+/**
+ * Every engine activation and identity variable Claude Code recognises. Cleared
+ * wholesale before writing the selected engine so switching providers cannot
+ * leave a stale flag behind.
+ */
+const CLAUDE_ENGINE_ENV_KEYS = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_VERTEX",
+  "AWS_REGION",
+  "AWS_PROFILE",
+  "ANTHROPIC_FOUNDRY_RESOURCE",
+  "ANTHROPIC_VERTEX_PROJECT_ID",
+  "CLOUD_ML_REGION",
+] as const;
+
+/**
+ * Model aliases resolve to engine-specific identifiers, so the defaults must be
+ * rewritten alongside the activation flag. Foundry values are deployment names,
+ * which are chosen by the operator; these are the conventional names and are
+ * expected to be overridden when they differ.
+ */
+const CLAUDE_MODEL_DEFAULTS: Record<CloudProviderKind, Record<string, string>> = {
+  "amazon-bedrock": {
+    ANTHROPIC_DEFAULT_FABLE_MODEL: "global.anthropic.claude-fable-5[1m]",
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "global.anthropic.claude-opus-4-8[1m]",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "global.anthropic.claude-sonnet-4-6[1m]",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL:
+      "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+  },
+  // Foundry values are Azure deployment names chosen by the operator. Foundry
+  // has no startup model check, so an unpinned or misnamed model fails at
+  // request time rather than degrading; these must be reviewed after install.
+  "azure-ai-foundry": {
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-8",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+  },
+  // Vertex model ids carry an @version suffix where the model is versioned.
+  "gcp-vertex-ai": {
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-8",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5@20251001",
+  },
+};
+
+/** Fields an engine must have recorded before its projection can be written. */
+const REQUIRED_PROVIDER_FIELDS: Record<
+  CloudProviderKind,
+  readonly (keyof ProvidersRecord)[]
+> = {
+  "amazon-bedrock": ["region"],
+  "azure-ai-foundry": ["resource"],
+  "gcp-vertex-ai": ["project", "location"],
+};
+
+export function isProviderConfigured(record: ProvidersRecord | null): boolean {
+  if (!record || !isCloudProvider(record.provider)) return false;
+  return REQUIRED_PROVIDER_FIELDS[record.provider].every((field) =>
+    Boolean(record[field]),
+  );
+}
+
+/** AIDLC provider ids mapped to the provider keys opencode.json expects. */
+const OPENCODE_PROVIDER_IDS: Record<CloudProviderKind, string> = {
+  "amazon-bedrock": "amazon-bedrock",
+  "azure-ai-foundry": "azure",
+  "gcp-vertex-ai": "google-vertex",
+};
 
 function unknownKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): string[] {
   return Object.keys(value).filter((key) => !allowed.has(key));
@@ -303,12 +417,14 @@ export function normalizeProvidersRecord(value: unknown): ProvidersRecord | null
   }
   const out: ProvidersRecord = { schemaVersion: 1 };
   if (value.provider !== undefined) {
-    if (value.provider !== "amazon-bedrock" && value.provider !== "other") {
-      throw new Error("providers.provider must be amazon-bedrock or other");
+    if (!PROVIDER_KINDS.includes(value.provider as ProviderKind)) {
+      throw new Error(
+        `providers.provider must be one of ${PROVIDER_KINDS.join(", ")}`,
+      );
     }
-    out.provider = value.provider;
+    out.provider = value.provider as ProviderKind;
   }
-  for (const key of ["region", "profile"] as const) {
+  for (const key of ["region", "profile", "resource", "project", "location"] as const) {
     const parsed = optionalString(value, key, "providers");
     if (parsed !== undefined) {
       if (!SAFE_VALUE.test(parsed)) {
@@ -897,8 +1013,13 @@ export function requiredProviderActions(
   harness: ModelHarness,
 ): ProviderPendingActionId[] {
   if (record.provider === "other") return ["non-bedrock-provider-configuration"];
-  if (record.provider !== "amazon-bedrock") return [];
-  const actions: ProviderPendingActionId[] = ["bedrock-model-access"];
+  if (!isCloudProvider(record.provider)) return [];
+  const modelAccess: Record<CloudProviderKind, ProviderPendingActionId> = {
+    "amazon-bedrock": "bedrock-model-access",
+    "azure-ai-foundry": "foundry-model-access",
+    "gcp-vertex-ai": "vertex-model-access",
+  };
+  const actions: ProviderPendingActionId[] = [modelAccess[record.provider]];
   if (harness === "kiro-ide") actions.push("kiro-ide-chat-model");
   if (harness === "copilot") actions.push("copilot-byok-configuration");
   if (harness === "cursor") actions.push("cursor-provider-configuration");
@@ -959,12 +1080,33 @@ function writeClaudeProvider(
   const settingsPath = join(projectionRoot, harnessDir, "settings.json");
   const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
   const env = isRecord(settings.env) ? { ...settings.env } : {};
-  env.AWS_REGION = record.region;
-  if (record.profile) env.AWS_PROFILE = record.profile;
-  else delete env.AWS_PROFILE;
+
+  // Switching engines must clear the previous engine's activation and identity
+  // variables, otherwise a stale flag silently wins at runtime.
+  for (const key of CLAUDE_ENGINE_ENV_KEYS) delete env[key];
+
+  const models = CLAUDE_MODEL_DEFAULTS[record.provider as CloudProviderKind];
+  for (const [key, value] of Object.entries(models)) env[key] = value;
+
+  if (record.provider === "amazon-bedrock") {
+    env.CLAUDE_CODE_USE_BEDROCK = "1";
+    env.AWS_REGION = record.region;
+    if (record.profile) env.AWS_PROFILE = record.profile;
+  } else if (record.provider === "azure-ai-foundry") {
+    env.CLAUDE_CODE_USE_FOUNDRY = "1";
+    env.ANTHROPIC_FOUNDRY_RESOURCE = record.resource;
+  } else if (record.provider === "gcp-vertex-ai") {
+    env.CLAUDE_CODE_USE_VERTEX = "1";
+    env.ANTHROPIC_VERTEX_PROJECT_ID = record.project;
+    env.CLOUD_ML_REGION = record.location;
+  }
+
   settings.env = env;
   writeJson(settingsPath, settings);
 
+  // The AWS MCP endpoint is Bedrock-region specific and has no analogue on the
+  // other engines.
+  if (record.provider !== "amazon-bedrock") return;
   const mcpPath = join(projectionRoot, ".mcp.json");
   if (!existsSync(mcpPath)) return;
   const mcp = JSON.parse(readFileSync(mcpPath, "utf-8")) as Record<string, unknown>;
@@ -982,25 +1124,75 @@ function writeClaudeProvider(
   writeJson(mcpPath, mcp);
 }
 
+/**
+ * Default Azure OpenAI REST API version used for the Responses API. Recorded in
+ * the emitted provider block so the operator can see and change it.
+ */
+const AZURE_OPENAI_API_VERSION = "2025-04-01-preview";
+
 function writeCodexProvider(
   projectionRoot: string,
   harnessDir: string,
   record: ProvidersRecord,
 ): void {
+  // Codex speaks only the OpenAI Responses API (`wire_api = "responses"`), and
+  // its shipped model is an OpenAI GPT id. Amazon Bedrock and Azure OpenAI both
+  // serve that surface; Google Vertex AI does not expose a Responses endpoint
+  // for OpenAI models, so gcp-vertex-ai stays an instruct-only pending action
+  // rather than a fabricated provider block.
+  if (record.provider !== "amazon-bedrock" && record.provider !== "azure-ai-foundry") {
+    return;
+  }
   const path = join(projectionRoot, harnessDir, "config.toml");
-  const content = readFileSync(path, "utf-8");
-  const section = /(\[model_providers\.amazon-bedrock\.aws\]\r?\n)([\s\S]*?)(?=\r?\n\[|$)/;
-  const match = section.exec(content);
-  if (!match) throw new Error(`${path}: missing amazon-bedrock aws provider section`);
-  const profile = record.profile ?? "default";
-  const lines = match[2].split(/\r?\n/).map((line) => {
-    if (/^profile\s*=/.test(line)) return `profile = ${JSON.stringify(profile)}`;
-    if (/^region\s*=/.test(line)) return `region = ${JSON.stringify(record.region)}`;
-    return line;
-  });
-  writeFileSync(
-    path,
-    content.replace(section, () => `${match[1]}${lines.join("\n")}`),
+  let content = readFileSync(path, "utf-8");
+
+  if (record.provider === "amazon-bedrock") {
+    const section = /(\[model_providers\.amazon-bedrock\.aws\]\r?\n)([\s\S]*?)(?=\r?\n\[|$)/;
+    const match = section.exec(content);
+    if (!match) throw new Error(`${path}: missing amazon-bedrock aws provider section`);
+    const profile = record.profile ?? "default";
+    const lines = match[2].split(/\r?\n/).map((line) => {
+      if (/^profile\s*=/.test(line)) return `profile = ${JSON.stringify(profile)}`;
+      if (/^region\s*=/.test(line)) return `region = ${JSON.stringify(record.region)}`;
+      return line;
+    });
+    content = content.replace(section, () => `${match[1]}${lines.join("\n")}`);
+    // Restore the shipped provider selection when switching back from Azure.
+    content = content.replace(
+      /^model_provider\s*=.*$/m,
+      'model_provider = "amazon-bedrock"',
+    );
+    writeFileSync(path, stripCodexAzureProvider(content));
+    return;
+  }
+
+  // Azure: point the session at a generic provider block. The Bedrock aws
+  // sub-table is left in place so switching back is lossless.
+  content = content.replace(/^model_provider\s*=.*$/m, 'model_provider = "azure"');
+  content = stripCodexAzureProvider(content);
+  const block = [
+    "",
+    "# AI-DLC: Azure OpenAI provider (generated by `aidlc config providers`).",
+    "# `model` above must name an Azure DEPLOYMENT, not a catalogue model id.",
+    "# Export the API key as AZURE_OPENAI_API_KEY before starting Codex.",
+    "[model_providers.azure]",
+    'name = "Azure OpenAI"',
+    `base_url = ${JSON.stringify(`https://${record.resource}.openai.azure.com/openai`)}`,
+    'env_key = "AZURE_OPENAI_API_KEY"',
+    'wire_api = "responses"',
+    "",
+    "[model_providers.azure.query_params]",
+    `api-version = ${JSON.stringify(AZURE_OPENAI_API_VERSION)}`,
+    "",
+  ].join("\n");
+  writeFileSync(path, `${content.replace(/\s*$/, "\n")}${block}`);
+}
+
+/** Removes a previously generated Azure provider block so writes stay idempotent. */
+function stripCodexAzureProvider(content: string): string {
+  return content.replace(
+    /\n*# AI-DLC: Azure OpenAI provider[\s\S]*?(?=\n\[model_providers\.amazon-bedrock|\n\[(?!model_providers\.azure)|\s*$)/,
+    "\n",
   );
 }
 
@@ -1009,6 +1201,14 @@ function writeKiroProvider(
   harnessDir: string,
   record: ProvidersRecord,
 ): void {
+  // Kiro's only provider-shaped surface is settings/mcp.json, and every entry
+  // in it is an AWS *tooling* server (aws-mcp, aws-pricing, aws-iac,
+  // aws-serverless) whose endpoint is region-specific but independent of the
+  // chat engine. Kiro's chat model is chosen in the IDE picker, not in any file
+  // this tool owns, so Azure and Vertex carry no Kiro file mutation; they are
+  // reported through their <engine>-model-access pending action, plus
+  // kiro-ide-chat-model on the kiro-ide harness.
+  if (record.provider !== "amazon-bedrock") return;
   const path = join(projectionRoot, harnessDir, "settings", "mcp.json");
   if (!existsSync(path)) return;
   const value = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
@@ -1030,19 +1230,26 @@ function writeOpenCodeProvider(
   projectionRoot: string,
   record: ProvidersRecord,
 ): void {
-  if (!record.opencodeDefault) return;
+  if (!record.opencodeDefault || !isCloudProvider(record.provider)) return;
   const path = join(projectionRoot, "opencode.json");
   const value = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
   const providers = isRecord(value.provider) ? { ...value.provider } : {};
-  const existing = isRecord(providers["amazon-bedrock"])
-    ? providers["amazon-bedrock"]
-    : {};
-  providers["amazon-bedrock"] = {
+  const key = OPENCODE_PROVIDER_IDS[record.provider];
+  const existing = isRecord(providers[key]) ? providers[key] : {};
+  const options: Record<string, unknown> =
+    record.provider === "amazon-bedrock"
+      ? {
+        region: record.region,
+        ...(record.profile ? { profile: record.profile } : {}),
+      }
+      : record.provider === "azure-ai-foundry"
+      ? { resourceName: record.resource }
+      : { project: record.project, location: record.location };
+  providers[key] = {
     ...existing,
     options: {
       ...(isRecord(existing.options) ? existing.options : {}),
-      region: record.region,
-      ...(record.profile ? { profile: record.profile } : {}),
+      ...options,
     },
   };
   value.provider = providers;
@@ -1081,7 +1288,7 @@ export function applyConfigDiagnosticRecords(
   records: ConfigDiagnosticRecords,
 ): void {
   const provider = records.providers;
-  if (provider?.provider !== "amazon-bedrock" || !provider.region) return;
+  if (!isProviderConfigured(provider) || !provider) return;
   if (harness === "claude") {
     writeClaudeProvider(projectionRoot, harnessDir, provider);
   } else if (harness === "codex") {
@@ -1104,31 +1311,43 @@ export function providerFiles(
     setting: "provider answers and pending actions",
     file: harnessData,
   }];
-  if (record?.provider !== "amazon-bedrock") return files;
+  if (!isCloudProvider(record?.provider)) return files;
   if (harness === "claude") {
     files.push({
-      setting: "AWS region and profile",
+      setting: record?.provider === "amazon-bedrock"
+        ? "AWS region and profile"
+        : "provider engine activation and model defaults",
       file: join(harnessDir, "settings.json"),
     });
-    if (existsSync(join(projectDir, ".mcp.json"))) {
+    if (
+      record?.provider === "amazon-bedrock" &&
+      existsSync(join(projectDir, ".mcp.json"))
+    ) {
       files.push({
         setting: "AWS MCP region endpoint and metadata",
         file: ".mcp.json",
       });
     }
   } else if (harness === "codex") {
-    files.push({
-      setting: "Bedrock AWS region and profile",
-      file: join(harnessDir, "config.toml"),
-    });
-  } else if (harness === "kiro") {
+    if (record?.provider === "amazon-bedrock") {
+      files.push({
+        setting: "Bedrock AWS region and profile",
+        file: join(harnessDir, "config.toml"),
+      });
+    } else if (record?.provider === "azure-ai-foundry") {
+      files.push({
+        setting: "Azure OpenAI provider block and model_provider selection",
+        file: join(harnessDir, "config.toml"),
+      });
+    }
+  } else if (harness === "kiro" && record?.provider === "amazon-bedrock") {
     files.push({
       setting: "AWS MCP region endpoint and metadata",
       file: join(harnessDir, "settings", "mcp.json"),
     });
   } else if (harness === "opencode" && record.opencodeDefault) {
     files.push({
-      setting: "amazon-bedrock provider options",
+      setting: `${OPENCODE_PROVIDER_IDS[record.provider]} provider options`,
       file: "opencode.json",
     });
   }
@@ -1516,7 +1735,8 @@ function providerValueIssues(
   harness: ModelHarness,
   record: ProvidersRecord,
 ): DiagnosticIssue[] {
-  if (record.provider !== "amazon-bedrock" || !record.region) return [];
+  if (!isCloudProvider(record.provider)) return [];
+  if (!isProviderConfigured(record)) return [];
   const issues: DiagnosticIssue[] = [];
   const mismatch = (id: string, file: string, message: string): void => {
     issues.push({
@@ -1530,11 +1750,43 @@ function providerValueIssues(
       const settingsPath = join(projectDir, harnessDir, "settings.json");
       const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
       const env = isRecord(settings.env) ? settings.env : {};
-      if (env.AWS_REGION !== record.region || (record.profile && env.AWS_PROFILE !== record.profile)) {
-        mismatch("provider-claude-settings", settingsPath, "Claude settings do not reflect the recorded AWS region/profile");
+      // Each engine has exactly one activation flag plus its identity values;
+      // a stale flag from a previous engine is itself drift.
+      const expected: Record<string, unknown> =
+        record.provider === "amazon-bedrock"
+          ? {
+            CLAUDE_CODE_USE_BEDROCK: "1",
+            AWS_REGION: record.region,
+            ...(record.profile ? { AWS_PROFILE: record.profile } : {}),
+          }
+          : record.provider === "azure-ai-foundry"
+          ? {
+            CLAUDE_CODE_USE_FOUNDRY: "1",
+            ANTHROPIC_FOUNDRY_RESOURCE: record.resource,
+          }
+          : {
+            CLAUDE_CODE_USE_VERTEX: "1",
+            ANTHROPIC_VERTEX_PROJECT_ID: record.project,
+            CLOUD_ML_REGION: record.location,
+          };
+      const stale = CLAUDE_ENGINE_ENV_KEYS.filter((key) =>
+        !Object.hasOwn(expected, key) && env[key] !== undefined
+      );
+      if (
+        Object.entries(expected).some(([key, value]) => env[key] !== value) ||
+        stale.length > 0
+      ) {
+        mismatch(
+          "provider-claude-settings",
+          settingsPath,
+          stale.length > 0
+            ? `Claude settings still carry ${stale.join(", ")} from a previously configured engine`
+            : `Claude settings do not reflect the recorded ${record.provider} answer`,
+        );
       }
+      // The AWS MCP endpoint is Bedrock-specific; other engines do not touch it.
       const mcpPath = join(projectDir, ".mcp.json");
-      if (existsSync(mcpPath)) {
+      if (record.provider === "amazon-bedrock" && existsSync(mcpPath)) {
         const text = readFileSync(mcpPath, "utf-8");
         if (
           !text.includes(`https://aws-mcp.${record.region}.api.aws/mcp`) ||
@@ -1544,15 +1796,28 @@ function providerValueIssues(
         }
       }
     } else if (harness === "codex") {
+      // Vertex has no Codex projection: Codex speaks only the OpenAI Responses
+      // API, which Vertex does not serve. Nothing to drift-check.
+      if (record.provider === "gcp-vertex-ai") return issues;
       const path = join(projectDir, harnessDir, "config.toml");
       const text = readFileSync(path, "utf-8");
-      if (
-        !text.includes(`region = ${JSON.stringify(record.region)}`) ||
-        !text.includes(`profile = ${JSON.stringify(record.profile ?? "default")}`)
+      if (record.provider === "amazon-bedrock") {
+        if (
+          !text.includes(`region = ${JSON.stringify(record.region)}`) ||
+          !text.includes(`profile = ${JSON.stringify(record.profile ?? "default")}`) ||
+          !text.includes('model_provider = "amazon-bedrock"')
+        ) {
+          mismatch("provider-codex", path, "Codex Bedrock settings do not reflect the recorded region/profile");
+        }
+      } else if (
+        !text.includes('model_provider = "azure"') ||
+        !text.includes(`https://${record.resource}.openai.azure.com/openai`)
       ) {
-        mismatch("provider-codex", path, "Codex Bedrock settings do not reflect the recorded region/profile");
+        mismatch("provider-codex", path, "Codex Azure provider block does not reflect the recorded resource");
       }
     } else if (harness === "kiro") {
+      // Only Bedrock has a Kiro file surface; see writeKiroProvider.
+      if (record.provider !== "amazon-bedrock") return issues;
       const path = join(projectDir, harnessDir, "settings", "mcp.json");
       const text = readFileSync(path, "utf-8");
       if (
@@ -1565,10 +1830,24 @@ function providerValueIssues(
       const path = join(projectDir, "opencode.json");
       const value = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
       const providers = isRecord(value.provider) ? value.provider : {};
-      const bedrock = isRecord(providers["amazon-bedrock"]) ? providers["amazon-bedrock"] : {};
-      const options = isRecord(bedrock.options) ? bedrock.options : {};
-      if (options.region !== record.region || (record.profile && options.profile !== record.profile)) {
-        mismatch("provider-opencode", path, "OpenCode Bedrock provider options do not reflect the recorded region/profile");
+      const key = OPENCODE_PROVIDER_IDS[record.provider];
+      const entry = isRecord(providers[key]) ? providers[key] : {};
+      const options = isRecord(entry.options) ? entry.options : {};
+      const expected: Record<string, unknown> =
+        record.provider === "amazon-bedrock"
+          ? {
+            region: record.region,
+            ...(record.profile ? { profile: record.profile } : {}),
+          }
+          : record.provider === "azure-ai-foundry"
+          ? { resourceName: record.resource }
+          : { project: record.project, location: record.location };
+      if (Object.entries(expected).some(([name, value]) => options[name] !== value)) {
+        mismatch(
+          "provider-opencode",
+          path,
+          `OpenCode ${key} provider options do not reflect the recorded answer`,
+        );
       }
     }
   } catch (error) {

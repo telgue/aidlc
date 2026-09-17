@@ -143,11 +143,14 @@ import {
   reconcileProviderActions,
   runtimeIssues,
   trustStatus,
+  isCloudProvider,
+  PROVIDER_KINDS,
   type ConfigDiagnosticOverrides,
   type ConfigDiagnosticRecords,
   type CompletionShell,
   type ConfigOutstandingAction,
   type ProjectChoicesRecord,
+  type ProviderKind,
   type ProvidersRecord,
   type RuntimeRecord,
   type TrustRecord,
@@ -1211,9 +1214,12 @@ function diagnosticHelp(section: DiagnosticSection): string {
     : section === "providers"
     ? [
         heading("Provider answers:", out),
-        "  --provider <amazon-bedrock|other>",
-        "  --region <aws-region>",
-        "  --profile <aws-profile>",
+        "  --provider <amazon-bedrock|azure-ai-foundry|gcp-vertex-ai|other>",
+        "  --region <aws-region>            amazon-bedrock",
+        "  --profile <aws-profile>          amazon-bedrock",
+        "  --resource <resource-name>       azure-ai-foundry",
+        "  --project <gcp-project-id>       gcp-vertex-ai",
+        "  --location <region>              gcp-vertex-ai",
         "  --opencode-default <yes|no>",
         "  --acknowledge",
         "  --mark-done <pending-action-id>",
@@ -1530,14 +1536,20 @@ function providerRecordFromArgs(
 ): ProvidersRecord {
   const next = cloneDiagnosticRecord(current) ?? { schemaVersion: 1 };
   const provider = valueAfter(argv, "--provider");
-  if (provider !== undefined && provider !== "amazon-bedrock" && provider !== "other") {
-    throw new Error("--provider must be amazon-bedrock or other");
+  if (provider !== undefined && !PROVIDER_KINDS.includes(provider as ProviderKind)) {
+    throw new Error(`--provider must be one of ${PROVIDER_KINDS.join(", ")}`);
   }
-  if (provider) next.provider = provider;
+  if (provider) next.provider = provider as ProviderKind;
   const region = valueAfter(argv, "--region");
   const profile = valueAfter(argv, "--profile");
   if (region) next.region = region;
   if (profile) next.profile = profile;
+  const resource = valueAfter(argv, "--resource");
+  if (resource) next.resource = resource;
+  const project = valueAfter(argv, "--project");
+  const location = valueAfter(argv, "--location");
+  if (project) next.project = project;
+  if (location) next.location = location;
   const opencodeDefault = valueAfter(argv, "--opencode-default");
   if (opencodeDefault !== undefined) {
     if (selected.harness !== "opencode") {
@@ -1549,16 +1561,32 @@ function providerRecordFromArgs(
     next.opencodeDefault = opencodeDefault === "yes";
   }
   if (argv.includes("--acknowledge")) next.acknowledged = true;
-  if (!next.provider) throw new Error("provider configuration requires --provider <amazon-bedrock|other>");
+  if (!next.provider) {
+    throw new Error(
+      `provider configuration requires --provider <${PROVIDER_KINDS.join("|")}>`,
+    );
+  }
   if (next.provider === "amazon-bedrock" && !next.region) {
     throw new Error("Amazon Bedrock configuration requires --region <aws-region>");
   }
+  if (next.provider === "azure-ai-foundry" && !next.resource) {
+    throw new Error(
+      "Azure AI Foundry configuration requires --resource <foundry-resource-name>",
+    );
+  }
+  if (next.provider === "gcp-vertex-ai" && (!next.project || !next.location)) {
+    throw new Error(
+      "GCP Vertex AI configuration requires --project <gcp-project-id> and --location <region>",
+    );
+  }
   if (
-    next.provider === "amazon-bedrock" &&
+    isCloudProvider(next.provider) &&
     selected.harness === "opencode" &&
     next.opencodeDefault === undefined
   ) {
-    throw new Error("OpenCode Bedrock configuration requires --opencode-default <yes|no>");
+    throw new Error(
+      `OpenCode ${next.provider} configuration requires --opencode-default <yes|no>`,
+    );
   }
   if (
     next.provider === "other" &&
@@ -1633,38 +1661,59 @@ function diagnosticWizard(
           } region ${detected.region}.\n`
         : "  No AWS credentials were detected.\n",
     );
-    process.stdout.write(`    1. amazon-bedrock   ${
+    process.stdout.write(`    1. amazon-bedrock     ${
       credentials.hasCredentials ? "(detected, default)" : ""
     }\n`);
-    process.stdout.write("    2. other\n");
-    const providerAnswer = promptChoice(
+    process.stdout.write("    2. azure-ai-foundry   Claude models on Microsoft Foundry\n");
+    process.stdout.write("    3. gcp-vertex-ai      Claude models on Google Cloud\n");
+    process.stdout.write("    4. other              record your own provider setup\n");
+    const providerChoice = promptChoice(
       "  Provider",
-      2,
-      credentials.hasCredentials ? 1 : 2,
-    ) === 1
-      ? "amazon-bedrock"
-      : "other";
+      4,
+      credentials.hasCredentials ? 1 : 4,
+    );
+    const providerAnswer = (["amazon-bedrock", "azure-ai-foundry", "gcp-vertex-ai", "other"] as const)[
+      providerChoice - 1
+    ];
     const args = ["--provider", providerAnswer];
     const skipMarkDone = new Set<string>();
-    if (providerAnswer === "amazon-bedrock") {
-      const region = promptTextDefault("  AWS region", detected.region);
-      const profileAnswer = promptTextDefault(
-        "  AWS profile",
-        "default credential chain",
-      );
-      const profile = profileAnswer === "default credential chain"
-        ? ""
-        : profileAnswer;
-      args.push("--region", region);
-      if (profile) args.push("--profile", profile);
-      process.stdout.write(
-        `  Using amazon-bedrock in ${region} with ${
-          profile || "the default credential chain"
-        }.\n\n`,
-      );
+    if (isCloudProvider(providerAnswer)) {
+      if (providerAnswer === "amazon-bedrock") {
+        const region = promptTextDefault("  AWS region", detected.region);
+        const profileAnswer = promptTextDefault(
+          "  AWS profile",
+          "default credential chain",
+        );
+        const profile = profileAnswer === "default credential chain"
+          ? ""
+          : profileAnswer;
+        args.push("--region", region);
+        if (profile) args.push("--profile", profile);
+        process.stdout.write(
+          `  Using amazon-bedrock in ${region} with ${
+            profile || "the default credential chain"
+          }.\n\n`,
+        );
+      } else if (providerAnswer === "azure-ai-foundry") {
+        const resource = promptTextDefault("  Foundry resource name", "");
+        args.push("--resource", resource);
+        process.stdout.write(
+          `  Using azure-ai-foundry resource ${resource}.\n` +
+            "  Authenticate with ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_FOUNDRY_AUTH_TOKEN, or az login.\n" +
+            "  Foundry has no startup model check: confirm the recorded model names match your deployments.\n\n",
+        );
+      } else {
+        const project = promptTextDefault("  GCP project id", "");
+        const location = promptTextDefault("  Vertex location", "global");
+        args.push("--project", project, "--location", location);
+        process.stdout.write(
+          `  Using gcp-vertex-ai project ${project} in ${location}.\n` +
+            "  Authenticate with gcloud auth application-default login.\n\n",
+        );
+      }
       if (selected.harness === "opencode") {
         const offer = promptYesDefault(
-          "  Write amazon-bedrock provider options to opencode.json?",
+          `  Write ${providerAnswer} provider options to opencode.json?`,
           false,
         );
         args.push("--opencode-default", offer ? "yes" : "no");
@@ -4098,9 +4147,15 @@ type FirstRunDetection = {
 
 type FirstRunChoices = {
   candidate: InstalledSourceCandidate;
-  provider: "amazon-bedrock" | "other";
+  provider: ProviderKind;
   region: string;
   profile: string;
+  /** Azure AI Foundry resource name. */
+  resource: string;
+  /** GCP Vertex AI project id. */
+  project: string;
+  /** GCP Vertex AI location. */
+  location: string;
   preset: "balanced" | "thorough" | "minimal";
   plugins: string;
   pluginLabel: string;
@@ -4410,17 +4465,28 @@ function applyFirstRunChoices(
     "--provider",
     choices.provider,
   ];
-  if (choices.provider === "amazon-bedrock") {
-    providerArgs.push("--region", choices.region);
-    if (choices.profile) providerArgs.push("--profile", choices.profile);
+  if (isCloudProvider(choices.provider)) {
+    if (choices.provider === "amazon-bedrock") {
+      providerArgs.push("--region", choices.region);
+      if (choices.profile) providerArgs.push("--profile", choices.profile);
+      if (choices.providerVerified) {
+        providerArgs.push("--mark-done", "bedrock-model-access");
+      }
+    } else if (choices.provider === "azure-ai-foundry") {
+      providerArgs.push("--resource", choices.resource);
+    } else {
+      providerArgs.push(
+        "--project",
+        choices.project,
+        "--location",
+        choices.location,
+      );
+    }
     if (choices.candidate.stamp.distribution === "opencode") {
       providerArgs.push(
         "--opencode-default",
         choices.opencodeDefault ? "yes" : "no",
       );
-    }
-    if (choices.providerVerified) {
-      providerArgs.push("--mark-done", "bedrock-model-access");
     }
     providerArgs.push("--yes", "--json");
     runConfigChild(providerArgs, projectDir, snapshot);
@@ -4654,6 +4720,9 @@ function customizeFirstRun(
     provider: detection.aws.hasCredentials ? "amazon-bedrock" : "other",
     region: aws.region,
     profile: "",
+    resource: "",
+    project: "",
+    location: "global",
     preset: "balanced",
     plugins: "all",
     pluginLabel: "all installed",
@@ -4692,16 +4761,21 @@ function customizeFirstRun(
             } region ${aws.region}.\n`
           : "  No AWS credentials were detected.\n",
       );
-      process.stdout.write(`    1. amazon-bedrock   ${
+      process.stdout.write(`    1. amazon-bedrock     ${
         detection.aws.hasCredentials ? "(detected, default)" : ""
       }\n`);
-      process.stdout.write("    2. other            record your own provider setup\n");
+      process.stdout.write("    2. azure-ai-foundry   Claude models on Microsoft Foundry\n");
+      process.stdout.write("    3. gcp-vertex-ai      Claude models on Google Cloud\n");
+      process.stdout.write("    4. other              record your own provider setup\n");
       const selected = promptChoice(
         "  Provider",
-        2,
-        detection.aws.hasCredentials ? 1 : 2,
+        4,
+        detection.aws.hasCredentials ? 1 : 4,
       );
-      choices.provider = selected === 1 ? "amazon-bedrock" : "other";
+      choices.provider =
+        (["amazon-bedrock", "azure-ai-foundry", "gcp-vertex-ai", "other"] as const)[
+          selected - 1
+        ];
       if (choices.provider === "amazon-bedrock") {
         choices.region = promptTextDefault("  AWS region", choices.region);
         const profile = promptTextDefault(
@@ -4709,19 +4783,41 @@ function customizeFirstRun(
           choices.profile || "default credential chain",
         );
         choices.profile = profile === "default credential chain" ? "" : profile;
-        if (choices.candidate.stamp.distribution === "opencode") {
-          choices.opencodeDefault = promptYesDefault(
-            "  Make Bedrock OpenCode's default provider",
-            choices.opencodeDefault,
-          );
-        }
         process.stdout.write(
           `  Using amazon-bedrock in ${choices.region} with ${
             choices.profile || "the default credential chain"
           }.\n\n`,
         );
+      } else if (choices.provider === "azure-ai-foundry") {
+        choices.resource = promptTextDefault(
+          "  Foundry resource name",
+          choices.resource,
+        );
+        process.stdout.write(
+          `  Using azure-ai-foundry resource ${choices.resource}.\n` +
+            "  Authenticate with ANTHROPIC_FOUNDRY_API_KEY, ANTHROPIC_FOUNDRY_AUTH_TOKEN, or az login.\n\n",
+        );
+      } else if (choices.provider === "gcp-vertex-ai") {
+        choices.project = promptTextDefault("  GCP project id", choices.project);
+        choices.location = promptTextDefault(
+          "  Vertex location",
+          choices.location || "global",
+        );
+        process.stdout.write(
+          `  Using gcp-vertex-ai project ${choices.project} in ${choices.location}.\n` +
+            "  Authenticate with gcloud auth application-default login.\n\n",
+        );
       } else {
         process.stdout.write("  Using other provider setup.\n\n");
+      }
+      if (
+        isCloudProvider(choices.provider) &&
+        choices.candidate.stamp.distribution === "opencode"
+      ) {
+        choices.opencodeDefault = promptYesDefault(
+          `  Make ${choices.provider} OpenCode's default provider`,
+          choices.opencodeDefault,
+        );
       }
       return;
     }
@@ -4791,6 +4887,10 @@ function customizeFirstRun(
     process.stdout.write(`    2. Provider     ${
       choices.provider === "amazon-bedrock"
         ? `amazon-bedrock, ${choices.region}, ${choices.profile || "default credential chain"}`
+        : choices.provider === "azure-ai-foundry"
+        ? `azure-ai-foundry, ${choices.resource || "resource not set"}`
+        : choices.provider === "gcp-vertex-ai"
+        ? `gcp-vertex-ai, ${choices.project || "project not set"}, ${choices.location}`
         : "other"
     }\n`);
     process.stdout.write(`    3. Preset       ${choices.preset}\n`);
@@ -4899,6 +4999,9 @@ async function runFirstRunWizard(projectDir: string): Promise<boolean> {
       provider: detection.aws.hasCredentials ? "amazon-bedrock" : "other",
       region: aws.region,
       profile: "",
+      resource: "",
+      project: "",
+      location: "global",
       preset: "balanced",
       plugins: "all",
       pluginLabel: "all installed",
