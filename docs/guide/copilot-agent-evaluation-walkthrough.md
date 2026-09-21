@@ -45,10 +45,14 @@ found, that is fine — skip to Step 2 and use VS Code agent mode.
 About the version floors: `1.0.74` is the CLI floor the doctor actually
 checks. The VS Code floor quoted in the harness reference (`1.130`) is the line
 GitHub's agent-hook Preview was verified against — **nothing in AI-DLC enforces
-it**, and the doctor does not test it. On an older VS Code the install still
-configures and validates; what may degrade is the host-side hook surface
-(blocking `PreToolUse` deny, the blocking `Stop` hook). If gates seem not to
-enforce, suspect the host version first.
+it**, and the doctor does not test it.
+
+In practice this floor is softer than it reads. `/aidlc` was confirmed working
+in **VS Code 1.106.3** — well below 1.130 — with skills discovered and the
+workflow starting normally. Treat 1.130 as the line where the *host hook*
+surface (blocking `PreToolUse` deny, the blocking `Stop` hook) is known-good,
+not as a requirement for the workflow to run. If gates seem not to enforce,
+suspect the host version first.
 
 ### Step 2. Install AI-DLC
 
@@ -187,6 +191,31 @@ from a pinned dataset hash; no eval payloads leave the VPC.*
 Anything you write here becomes ambient context for every stage, and — more
 importantly — the agents will argue with it explicitly rather than quietly
 inventing something different.
+
+---
+
+## Stop. Everything below is typed in chat, not a terminal
+
+Part 1 was the last of the shell commands. `/aidlc` is a **Copilot chat
+slash-command**. Typing it in a terminal gives you:
+
+```text
+zsh: no such file or directory: /aidlc
+```
+
+That is your shell trying to execute a path called `/aidlc`. Nothing is broken.
+
+Open a Copilot agent session in the project first:
+
+- **VS Code agent mode** — open the project folder (`File > Open Folder`, the
+  project root, so `.github/` is at the top level), open Chat with
+  <kbd>Ctrl/Cmd</kbd>+<kbd>Alt</kbd>+<kbd>I</kbd>, and switch the mode selector
+  to **Agent**. Type `/aidlc ...` into the chat box.
+- **Copilot CLI** — run `copilot` in the project directory to get its
+  interactive prompt, then type `/aidlc ...` at *that* prompt (not at your
+  shell prompt).
+
+From here on, every block marked `text` is chat input.
 
 ---
 
@@ -436,6 +465,7 @@ These are harness facts, not style choices:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `zsh: no such file or directory: /aidlc` | `/aidlc` typed at a **shell** prompt | It is a chat slash-command — type it in VS Code agent-mode chat, or at the `copilot` interactive prompt |
 | `zsh: command not found: copilot` | Copilot CLI not installed | Expected and supported — use VS Code agent mode; the CLI is optional |
 | `curl` fails with `SSL certificate problem: unable to get local issuer certificate` | A corporate TLS proxy (e.g. Zscaler) re-signs `release-assets.githubusercontent.com`, and a non-system `curl` (Anaconda/OpenSSL) ignores the OS trust store | Use `/usr/bin/curl`, or point `CURL_CA_BUNDLE` at a bundle that includes your corporate root |
 | `aidlc config` appears to hang | It is interactive and waiting at a prompt | Run it in a real terminal; never pipe into it |
