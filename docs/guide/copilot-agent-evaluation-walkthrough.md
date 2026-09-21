@@ -72,6 +72,61 @@ The installer places the native `aidlc` command plus every harness runtime. It
 needs neither Bun nor Node.js. If a new shell cannot find `aidlc`, apply the
 PATH line the installer printed.
 
+#### If `curl` fails with a certificate error
+
+On a managed corporate machine this step commonly fails:
+
+```text
+curl: (60) SSL certificate problem: unable to get local issuer certificate
+```
+
+Nothing is wrong with the release. A TLS-inspecting proxy (Zscaler, Netskope,
+and similar) re-signs `release-assets.githubusercontent.com`, which is where
+GitHub redirects release downloads. Its root CA is trusted by your **operating
+system**, but tools that bundle their own OpenSSL — Anaconda's `curl`, for
+instance — never read the OS trust store, so verification fails.
+
+Confirm the diagnosis by following the redirect and reading the issuer:
+
+```bash
+/usr/bin/curl -sSI https://github.com/telgue/aidlc/releases/latest/download/install.sh | grep -i '^location:'
+echo | openssl s_client -connect release-assets.githubusercontent.com:443 \
+  -servername release-assets.githubusercontent.com 2>/dev/null | grep -E '^ *[0-9]+ s:|^ *i:'
+```
+
+A corporate issuer (rather than Let's Encrypt or DigiCert) confirms
+interception. The quick fix is to use the system `curl`, which does read the OS
+trust store:
+
+```bash
+/usr/bin/curl -fsSL https://github.com/telgue/aidlc/releases/latest/download/install.sh | sh
+```
+
+The durable fix is a CA bundle that contains both public and corporate roots.
+**Persist it in your shell profile** — otherwise the failure returns in every
+new terminal, including the ones the installer and `aidlc` spawn:
+
+```bash
+mkdir -p ~/.certs
+/usr/bin/curl -fsSL https://curl.se/ca/cacert.pem -o /tmp/public-roots.pem
+security find-certificate -a -p /Library/Keychains/System.keychain > /tmp/os-roots.pem
+security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> /tmp/os-roots.pem
+cat /tmp/public-roots.pem /tmp/os-roots.pem > ~/.certs/ca-bundle.pem
+
+cat >> ~/.zshrc <<'EOF'
+export CURL_CA_BUNDLE="$HOME/.certs/ca-bundle.pem"
+export SSL_CERT_FILE="$HOME/.certs/ca-bundle.pem"
+export REQUESTS_CA_BUNDLE="$HOME/.certs/ca-bundle.pem"
+export NODE_EXTRA_CA_CERTS="$HOME/.certs/ca-bundle.pem"
+EOF
+source ~/.zshrc
+```
+
+(The `security` lines are macOS; on Linux use your distribution's
+`/etc/ssl/certs/ca-certificates.crt` or the corporate root your IT team
+publishes.) This also fixes `pip`, `requests`, `git`, and Node behind the same
+proxy.
+
 ### Step 3. Create and configure the project
 
 ```bash
@@ -81,8 +136,19 @@ aidlc config --harness copilot
 aidlc doctor
 ```
 
-**`aidlc config` is interactive.** Run it in a real terminal — do not pipe
-anything into it. It prints a setup summary and offers to fix what it flags:
+**`aidlc config` is interactive when it needs to be.** Run it in a real
+terminal — do not pipe anything into it.
+
+With `--harness copilot` given explicitly and nothing left to ask, it simply
+configures and exits:
+
+```text
+configured /path/to/agent-eval-platform for GitHub Copilot 1.0.0; next: start
+Copilot CLI or VS Code agent mode, then run `/aidlc --doctor`
+```
+
+If it has questions — commonly on first use, when no model provider has been
+recorded — it prints a setup summary and offers to walk you through them:
 
 ```text
   Setup check - 1 of 7 sections need you.
@@ -97,7 +163,7 @@ anything into it. It prints a setup summary and offers to fix what it flags:
 
 Answering `Y` walks you through **model-provider selection right here** — this
 is Step 5 below, reached from inside this wizard rather than as a separate
-command later.
+command later. A bare `aidlc config` (no `--harness`) re-opens it at any time.
 
 `aidlc config --harness copilot` writes two trees:
 
@@ -113,13 +179,28 @@ Plus the root `AGENTS.md` (read by both surfaces) and the `aidlc/` workspace
 shell — a *sibling* of `.aidlc/`, not a child. That is where your artifacts,
 state, and audit log will live.
 
-### Step 4. Trust the folder — if you use the Copilot CLI
+### Step 4. Trust the folder
 
-**This step is CLI-only.** Copilot CLI repo hooks run only when the project's
-absolute path appears in `trustedFolders` in `~/.copilot/config.json`. Start
-the CLI once interactively and accept the prompt:
+Whether this step applies depends on one thing — **does
+`~/.copilot/config.json` exist?**
 
 ```bash
+ls ~/.copilot/config.json
+```
+
+- **No such file** — nothing to do. A VS Code-only install has no CLI config,
+  and the doctor treats its absence as a pass. Skip to Step 5.
+- **The file exists** — you must add this project, even if you only ever use
+  VS Code. Once the file is present the doctor holds you to it, because CLI
+  hook trust becomes verifiable and therefore checkable. Installing the Copilot
+  CLI at any point in the past is enough to create it.
+
+Copilot CLI repo hooks run only when the project's absolute path appears in
+`trustedFolders`. The supported way is to start the CLI once in the project
+and accept the prompt:
+
+```bash
+cd agent-eval-platform
 copilot
 ```
 
@@ -133,21 +214,25 @@ export GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=1
 anywhere.** You would get a chatbot that looks like AI-DLC and enforces nothing
 — no audit log, no reviewer scope bound, no state-transition guard.
 
-If you use **VS Code agent mode only**, there is nothing to do: the doctor
-treats an absent `~/.copilot/config.json` as a pass, because a VS Code-only
-install has no CLI config. (An *existing but malformed* config does fail, since
-CLI trust then cannot be verified.)
-
-If the CLI has been installed before and the file exists, the doctor will hold
-you to it. It reads JSONC, so the file legitimately contains comments — edit it
-by hand if needed, keeping the comment header intact:
+You can also edit the file directly. It is **JSONC**, so it legitimately
+contains comments and a strict JSON parser will reject it — edit it as text and
+keep the comment header:
 
 ```text
+// User settings belong in settings.json.
+// This file is managed automatically.
+{
+  ...
   "trustedFolders": [
     "/absolute/path/to/agent-eval-platform",
     ...
   ]
+}
 ```
+
+Use the **absolute, symlink-resolved** path. On macOS a project under `/tmp`
+resolves to `/private/tmp/...`; the doctor compares realpath-normalized
+entries and prints the exact string it wants in its `fix:` line.
 
 Verify either way:
 
@@ -155,8 +240,9 @@ Verify either way:
 aidlc doctor
 ```
 
-A clean run reports `0 problems` and exits `0`. Remaining warnings (update
-cache, uncommitted `aidlc/` records, plugin inventory) are advisory.
+A clean run reports `0 problems` and exits `0`. The three remaining warnings —
+update cache absent, uncommitted `aidlc/` records, plugin inventory — are
+advisory and expected on a fresh project.
 
 ### Step 5. Model provider
 
