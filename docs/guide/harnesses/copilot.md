@@ -91,6 +91,9 @@ then set `RUNTIME_ROOT` to the extracted `runtime/` directory.
 4. Run `/aidlc --doctor`, then `/aidlc` followed by what you want to build —
    in either surface.
 
+For an end-to-end run on this harness, see
+[Walkthrough: Building an Agent Evaluation Platform on GitHub Copilot](../copilot-agent-evaluation-walkthrough.md).
+
 Framework developers who need the Bun-shaped projection can clone the
 repository, run `bun install --frozen-lockfile` and `bun scripts/package.ts`,
 then use the ignored local `dist/copilot/` output.

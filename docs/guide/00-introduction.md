@@ -76,6 +76,7 @@ To reshape *how* AI-DLC behaves — add a stage or an agent, define a scope, aut
 | [Artifacts Reference](14-artifacts-reference.md) | The per-intent record dir (`aidlc/spaces/<space>/intents/<YYMMDD>-<label>/`) explained |
 | [Troubleshooting](15-troubleshooting.md) | Symptom-based problem solving |
 | [Worked Examples](16-worked-examples.md) | Full bugfix and feature walkthroughs |
+| [Agent Evaluation Platform on Copilot](copilot-agent-evaluation-walkthrough.md) | End-to-end Copilot harness walkthrough building a unified agent-evaluation platform |
 | [Skills and Runner Commands](17-skills.md) | The `/aidlc-*` stage- and scope-runner commands and the author-your-own-runner path |
 | [Install and Lifecycle](18-install-and-lifecycle.md) | Native install, init, upgrades, rollback, pins, offline packages, and uninstall |
 | [Multi-Team Construction and Workshop Mode](workshop-mode.md) | Claim, build, pinned merge-back, release, and workshop flow for clone and sibling-worktree teams |

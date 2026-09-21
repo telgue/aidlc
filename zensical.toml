@@ -57,6 +57,7 @@ nav = [
     { "Help and Examples" = [
       "guide/15-troubleshooting.md",
       "guide/16-worked-examples.md",
+      "guide/copilot-agent-evaluation-walkthrough.md",
       "guide/workshop-mode.md",
       "guide/glossary.md",
     ] },
