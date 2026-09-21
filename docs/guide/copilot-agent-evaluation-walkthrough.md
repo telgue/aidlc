@@ -15,32 +15,40 @@ This is exactly the kind of work AI-DLC exists for: many overlapping tools, no
 single obvious architecture, real compliance exposure, and a strong temptation
 to start coding before the problem is framed.
 
-> **Scope of this chapter.** Everything about the *harness* (install, trust,
-> hooks, what Copilot does differently) is factual and matches the shipped
-> Copilot distribution — see [AI-DLC on GitHub Copilot](harnesses/copilot.md)
-> for the reference. The *transcript* is an illustrative composite: your run
-> will ask different questions and produce different decisions. The stage
-> route, gates, and artifact paths are real.
+> **Scope of this chapter.** **Part 1 (setup) was executed end-to-end** on a
+> macOS VS Code-only machine against AI-DLC 1.0.0 and corrected against what
+> actually happened — the commands, prompts, and `aidlc doctor` results are
+> real. The *Part 3 transcript* is an illustrative composite: your run will ask
+> different questions and reach different decisions. The stage route, gates,
+> and artifact paths are real. See
+> [AI-DLC on GitHub Copilot](harnesses/copilot.md) for the harness reference.
 
 ---
 
 ## Part 1 — Set up the Copilot harness
 
-### Step 1. Check the host versions
+### Step 1. Pick your surface and check its version
 
 One AI-DLC install serves **both** Copilot surfaces — the standalone Copilot
 CLI and VS Code agent mode. Both read the same `.github/{skills,agents,hooks}`
-tree and the root `AGENTS.md`.
+tree and the root `AGENTS.md`. **You only need one of them.**
 
 ```bash
-copilot --version   # need >= 1.0.74
-code --version      # need >= 1.130 if you want VS Code agent mode
+copilot --version   # Copilot CLI, if you use it (>= 1.0.74)
+code --version      # VS Code, if you use agent mode
 ```
 
-Those floors are not cosmetic. They are the verified line for PascalCase hook
-registration, the blocking `PreToolUse` deny channel, the blocking `Stop` hook,
-and `.github` skills/agents discovery. Below them, AI-DLC's guardrails degrade
-silently.
+The Copilot CLI is **optional**: the installer records it as not required, and
+`aidlc doctor` passes cleanly on a VS Code-only machine. If `copilot` is not
+found, that is fine — skip to Step 2 and use VS Code agent mode.
+
+About the version floors: `1.0.74` is the CLI floor the doctor actually
+checks. The VS Code floor quoted in the harness reference (`1.130`) is the line
+GitHub's agent-hook Preview was verified against — **nothing in AI-DLC enforces
+it**, and the doctor does not test it. On an older VS Code the install still
+configures and validates; what may degrade is the host-side hook surface
+(blocking `PreToolUse` deny, the blocking `Stop` hook). If gates seem not to
+enforce, suspect the host version first.
 
 ### Step 2. Install AI-DLC
 
@@ -69,6 +77,24 @@ aidlc config --harness copilot
 aidlc doctor
 ```
 
+**`aidlc config` is interactive.** Run it in a real terminal — do not pipe
+anything into it. It prints a setup summary and offers to fix what it flags:
+
+```text
+  Setup check - 1 of 7 sections need you.
+
+    [ok]     Harnesses   copilot recorded
+    [ok]     Runtime     hook PATH ready
+    [needs]  Providers   no recorded answers; provider access unverified
+    [ok]     Trust       no unmet host trust
+
+  Fix the 1 sections that need you now? [Y/n]:
+```
+
+Answering `Y` walks you through **model-provider selection right here** — this
+is Step 5 below, reached from inside this wizard rather than as a separate
+command later.
+
 `aidlc config --harness copilot` writes two trees:
 
 - **`.aidlc/`** — the engine (tools, hooks and the Copilot adapter, the 14
@@ -83,11 +109,11 @@ Plus the root `AGENTS.md` (read by both surfaces) and the `aidlc/` workspace
 shell — a *sibling* of `.aidlc/`, not a child. That is where your artifacts,
 state, and audit log will live.
 
-### Step 4. Trust the folder — the step people skip
+### Step 4. Trust the folder — if you use the Copilot CLI
 
-Repo hooks run **only** when the project's absolute path appears in
-`trustedFolders` in `~/.copilot/config.json`. Start the CLI once interactively
-and accept the prompt:
+**This step is CLI-only.** Copilot CLI repo hooks run only when the project's
+absolute path appears in `trustedFolders` in `~/.copilot/config.json`. Start
+the CLI once interactively and accept the prompt:
 
 ```bash
 copilot
@@ -99,23 +125,48 @@ For headless runs (`copilot -p "..."`) you additionally need:
 export GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=1
 ```
 
-**Untrusted means every hook silently no-ops, with no warning anywhere.** You
-would get a chatbot that looks like AI-DLC and enforces nothing — no audit log,
-no reviewer scope bound, no state-transition guard. Verify:
+**For CLI users, untrusted means every hook silently no-ops, with no warning
+anywhere.** You would get a chatbot that looks like AI-DLC and enforces nothing
+— no audit log, no reviewer scope bound, no state-transition guard.
+
+If you use **VS Code agent mode only**, there is nothing to do: the doctor
+treats an absent `~/.copilot/config.json` as a pass, because a VS Code-only
+install has no CLI config. (An *existing but malformed* config does fail, since
+CLI trust then cannot be verified.)
+
+If the CLI has been installed before and the file exists, the doctor will hold
+you to it. It reads JSONC, so the file legitimately contains comments — edit it
+by hand if needed, keeping the comment header intact:
 
 ```text
-/aidlc --doctor
+  "trustedFolders": [
+    "/absolute/path/to/agent-eval-platform",
+    ...
+  ]
 ```
 
-The doctor checks both trust conditions explicitly. Do not proceed until it is
-clean.
+Verify either way:
 
-### Step 5. Pick a model provider
+```bash
+aidlc doctor
+```
+
+A clean run reports `0 problems` and exits `0`. Remaining warnings (update
+cache, uncommitted `aidlc/` records, plugin inventory) are advisory.
+
+### Step 5. Model provider
+
+You normally reach this from the Step 3 wizard rather than running it
+separately; `aidlc config` alone re-opens it.
 
 Nothing in this install pins a model — agents inherit the session model on both
 surfaces. Signed-in Copilot works as-is. BYOK works with no GitHub auth at all;
 `copilot help providers` documents the environment variables. In VS Code, use
 the model picker or a Custom Endpoint provider.
+
+If you are not using a cloud provider's credentials, choosing `other` and
+confirming manual setup is a valid, fully-supported answer — the doctor records
+it and moves on.
 
 For this workload, prefer a large-context reasoning model. The Inception phase
 holds nine libraries' capability surfaces in view simultaneously.
@@ -385,10 +436,14 @@ These are harness facts, not style choices:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Nothing is written to `aidlc/`, no gates appear | Folder not trusted — hooks are no-opping | Run `copilot` interactively and accept the prompt; re-run `/aidlc --doctor` |
+| `zsh: command not found: copilot` | Copilot CLI not installed | Expected and supported — use VS Code agent mode; the CLI is optional |
+| `curl` fails with `SSL certificate problem: unable to get local issuer certificate` | A corporate TLS proxy (e.g. Zscaler) re-signs `release-assets.githubusercontent.com`, and a non-system `curl` (Anaconda/OpenSSL) ignores the OS trust store | Use `/usr/bin/curl`, or point `CURL_CA_BUNDLE` at a bundle that includes your corporate root |
+| `aidlc config` appears to hang | It is interactive and waiting at a prompt | Run it in a real terminal; never pipe into it |
+| `aidlc doctor` exits 1 on `trustedFolders` | Copilot CLI config exists but omits this project | Add the absolute path to `trustedFolders`, or accept the CLI trust prompt |
+| Nothing is written to `aidlc/`, no gates appear (CLI) | Folder not trusted — hooks are no-opping | Accept the trust prompt; re-run `aidlc doctor` |
 | Hooks work interactively but not in `copilot -p` | Headless mode needs the opt-in | `export GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=1` |
-| Copilot shows a picker instead of numbered options | Host below the version floor, or no running workflow | Upgrade to CLI >= 1.0.74 / VS Code >= 1.130 |
-| `/aidlc` not recognized | Skills not discovered | Confirm `.github/skills/aidlc/` exists and the project root is the workspace root |
+| Copilot shows a picker instead of numbered options | Host below the version floor, or no running workflow | Upgrade the host; confirm a workflow is `Status: Running` |
+| `/aidlc` not recognized | Skills not discovered | Confirm `.github/skills/aidlc/SKILL.md` exists and the project root is the workspace root |
 | Agent invents libraries or versions | Missing grounding | Record the pinned set in `aidlc/spaces/default/memory/project.md` and re-run the stage |
 
 Full reference: [AI-DLC on GitHub Copilot](harnesses/copilot.md). For the
