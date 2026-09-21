@@ -15,12 +15,13 @@ This is exactly the kind of work AI-DLC exists for: many overlapping tools, no
 single obvious architecture, real compliance exposure, and a strong temptation
 to start coding before the problem is framed.
 
-> **Scope of this chapter.** **Part 1 (setup) was executed end-to-end** on a
-> macOS VS Code-only machine against AI-DLC 1.0.0 and corrected against what
-> actually happened — the commands, prompts, and `aidlc doctor` results are
-> real. The *Part 3 transcript* is an illustrative composite: your run will ask
-> different questions and reach different decisions. The stage route, gates,
-> and artifact paths are real. See
+> **Scope of this chapter.** This guide was **executed end-to-end** on macOS
+> against AI-DLC 1.0.0 with the Copilot CLI, and corrected against what
+> actually happened. The commands, prompts, `aidlc doctor` results, stage
+> counts, artifact paths, and generated code structure are all observed, not
+> reconstructed. What varies between runs is the *conversation*: the questions
+> asked and the decisions reached are yours, and the Part 3 narrative shows one
+> plausible shape rather than a script. See
 > [AI-DLC on GitHub Copilot](harnesses/copilot.md) for the harness reference.
 
 ---
@@ -331,6 +332,29 @@ Compose proposes a tailored stage list and stops at an approve/edit/reject gate
 before anything is created. It also works mid-workflow to re-shape the stages
 you have not reached yet.
 
+### Do not run this headless
+
+It is tempting to script the run:
+
+```bash
+copilot -p "/aidlc feature ..." --allow-all-tools   # DON'T
+```
+
+This does work, in the sense that it executes. In a verified run it went from
+Intent Capture all the way into Construction, writing eighteen source files,
+**without stopping at a single approval gate** — because `--allow-all-tools`
+pre-answers every permission prompt and headless mode has no human turn for a
+gate to wait on.
+
+You end up with a large amount of generated code that no one approved, derived
+from requirements no one reviewed. The gates are the product; removing them
+leaves you with an expensive autocomplete.
+
+It also takes a long time with no visible progress, which reads as a hang. It
+is not hanging — it is running a 32-stage workflow.
+
+Run it interactively.
+
 ---
 
 ## Part 3 — The run, stage by stage
@@ -341,13 +365,29 @@ Three stages execute as a single deterministic tool call, well under a second,
 with no interaction:
 
 - **0.1 Workspace Scaffold** — creates the intent record at
-  `aidlc/spaces/default/intents/<YYMMDD>-agent-eval-platform/`
-- **0.2 Workspace Detection** — greenfield, empty repository, Python toolchain
-  implied by `project.md`
+  `aidlc/spaces/default/intents/<YYMMDD>-<label>/`, e.g.
+  `260921-agent-eval-platform/`
+- **0.2 Workspace Detection** — scans the repository. On a genuinely empty
+  greenfield project it records `Languages: Unknown`, `Frameworks: Unknown`,
+  `Build System: Unknown`. That is correct, not a failure: there is no code to
+  detect yet. What you wrote in `project.md` is method context, not a detected
+  fact, and the stage does not conflate the two.
 - **0.3 State Init** — writes `aidlc-state.md` with scope `feature`, depth
-  `Standard`, and the 33-stage route
+  `Standard`, and the resolved route
 
-> Progress: 3/33 overall | 3/3 INITIALIZATION complete. Next: Intent Discovery
+The route is resolved, not static. Feature's 33-stage list minus the
+conditional stages that do not apply gives the real plan:
+
+```text
+- **Stages to Execute**: 0.1, 0.2, 0.3, 1.1 ... 4.7
+- **Stages to Skip**: 2.1 (reverse-engineering — greenfield)
+- **Total Stages**: 32
+```
+
+So a greenfield Feature run is **32 stages**, not 33 — Reverse Engineering
+self-skips because there is no existing code to read.
+
+> Progress: 3/32 overall | 3/3 INITIALIZATION complete. Next: Intent Discovery
 
 ### Ideation — where the nine libraries get sorted
 
@@ -456,19 +496,33 @@ Copilot enforces a **plan-approval gate** before code generation. You will see
 the plan; approve it before any file is written. This is a blocking hook, not a
 convention — the tool call is denied if the gate has not been satisfied.
 
-A realistic adapter seam looks like this, and is worth insisting on because it
-is what keeps nine libraries from leaking into your core:
+A real adapter seam from an executed run looks like this — and it is worth
+insisting on, because it is what keeps nine libraries from leaking into your
+core:
 
 ```python
-class EvalAdapter(Protocol):
-    name: str
-    def available(self) -> bool: ...
-    def run(self, cases: Sequence[EvalCase], ctx: RunContext) -> Iterable[EvalResult]: ...
+class Adapter(ABC):
+    """Base class every tool adapter implements."""
+
+    name: ClassVar[str]
+    pillar: ClassVar[Pillar]        # scoring | observability | safety
+
+    def is_available(self) -> tuple[bool, str | None]:
+        """Return (available, reason_if_not)."""
+        return True, None
+
+    @abstractmethod
+    def run(self) -> AdapterResult: ...
 ```
 
-`available()` is what makes the optional-dependency requirement real: an
-adapter whose library is not installed reports unavailable and is skipped, and
-the run still succeeds.
+Two details worth copying. `is_available()` returns the *reason* it is
+unavailable, not just a boolean — so a skipped adapter explains itself in the
+report instead of vanishing. And `pillar` makes the three-role split explicit
+in the type system rather than leaving it as folder convention.
+
+That is what makes the optional-dependency requirement real: an adapter whose
+upstream package is not installed reports `Status.SKIPPED` with a
+`skip_reason`, and the run still succeeds.
 
 **Build and Test** (`aidlc-quality-agent`) runs the suite. Insist that adapter
 tests use recorded fixtures rather than live model calls — otherwise your CI
@@ -488,18 +542,48 @@ contract for `aeval run --gate` is what other teams integrate against.
 
 ## Part 4 — What you end up with
 
+```text
+aidlc/spaces/default/intents/260921-agent-eval-platform/
+  aidlc-state.md            # scope, depth, resolved route, active agent
+  initialization/
+  ideation/
+    intent-capture/         # one directory PER STAGE, not one file
+      intent-statement.md
+      stakeholder-map.md
+      intent-capture-questions.md
+      memory.md
+  inception/
+  construction/
+  operation/
+  verification/
+  audit/
+    <host>-<id>.md          # per-clone audit shard
+  .aidlc-source-review/     # reviewer receipts, e.g. code-generation/
+  .aidlc-guard-refusals/    # what the hooks actually blocked
+  .aidlc-hooks-health/
 ```
-aidlc/spaces/default/
-  intents/260921-agent-eval-platform/
-    ideation/       market-research.md, feasibility.md, scope-definition.md
-    inception/      requirements.md, architecture.md, units.md, compliance.md
-    construction/   per-unit plans, test strategy, build reports
-    operation/      pipeline.md, deployment.md
-    aidlc-state.md
-    questions/      every question asked, with your [Answer]: tags
-  memory/           org.md, team.md, project.md, phases/*.md
-  audit/            append-only decision log
+
+Note the shape: each phase directory holds **one subdirectory per stage**, and
+each stage writes several artifacts plus its own `questions.md` and `memory.md`.
+The dot-directories are the enforcement record — `.aidlc-guard-refusals/` is
+where you look when you want proof a guard fired rather than a claim that it
+would.
+
+A greenfield Feature run also writes real source. From an executed run:
+
+```text
+src/agent_eval/
+  schema.py  config.py  telemetry.py  reproducibility.py  target.py
+  adapters/
+    base.py                       # the Adapter ABC above
+    scoring/        ragas_adapter.py  deepeval_adapter.py  mlflow_adapter.py
+    observability/  phoenix_adapter.py  trulens_adapter.py  nemo_adapter.py
+    safety/         promptfoo_adapter.py  pyrit_adapter.py
 ```
+
+That three-way `scoring` / `observability` / `safety` split is the capability
+matrix from Ideation showing up as directory structure — which is the whole
+point of not skipping that phase.
 
 The audit log is the part that pays off months later. When someone asks *"why
 does this use Phoenix for spans but MLflow for runs?"*, the answer is recorded
