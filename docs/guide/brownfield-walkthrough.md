@@ -16,10 +16,10 @@ ways:
    differently, because existing structure can justify compressing discovery.
 
 > Prerequisite: your project is already installed and configured. If not, work
-> through `manual.md` first (install → `aidlc config` → provider → trust →
+> through `opencode-copilot-manual.md` first (install → `aidlc config` → provider → trust →
 > `aidlc doctor`).
 >
-> Starting a brand-new project instead? Use `greenfield-guide.md`.
+> Starting a brand-new project instead? Use `greenfield-walkthrough.md`.
 
 ---
 
@@ -80,7 +80,7 @@ The classification is made by the **Workspace Detection** stage, deterministical
 | A parseable root `.gitmodules` with ≥1 submodule path | declares code even before submodules are initialized |
 
 If **none** of these fire, the project is not brownfield and this guide does not
-apply — use `greenfield-guide.md` instead.
+apply — use `greenfield-walkthrough.md` instead.
 
 ### What does NOT make it brownfield
 
@@ -107,14 +107,21 @@ You want `**Project Type**: Brownfield`.
 
 If it reports Brownfield but you intend to treat the project as a fresh start
 (the documented example is a `create-next-app` scaffold), that is a greenfield
-workflow — see `greenfield-guide.md` for the override procedure.
+workflow — see `greenfield-walkthrough.md` for the override procedure.
 
 If it reports Greenfield but the project genuinely contains code, check that the
-code is not inside an excluded directory, then re-initialize:
+code is not inside an excluded directory, then describe the work again so a
+fresh intent is minted and the `workspace-detection` stage re-runs against the
+corrected tree:
 
 ```bash
-/aidlc --init --force
+/aidlc <describe the work you want to do>
 ```
+
+Project Type is recorded at intent creation, and intents are auto-created the
+first time you describe work — there is no separate re-initialize command. To
+correct an existing workflow in place, edit the **Project Type** line in
+`<record>/aidlc-state.md`.
 
 ---
 
@@ -545,11 +552,11 @@ aidlc/spaces/default/codekb/<repo>/ - first scan, nothing to compare.
 
 ## Reference
 
-- `manual.md` — install, config, provider, trust, doctor
-- `greenfield-guide.md` — the companion guide, for a brand-new project
-- [Workflow Profiles](docs/guide/workflow-profiles.md)
-- [Scopes, Depth, and Test Strategy](docs/guide/05-scopes-and-depth.md)
-- [Spaces and Intents](docs/guide/03-spaces-and-intents.md)
-- [Worked Examples](docs/guide/16-worked-examples.md)
-- [Your First Workflow](docs/guide/02-your-first-workflow.md)
-- [Artifacts Reference](docs/guide/14-artifacts-reference.md)
+- [opencode and GitHub Copilot Manual](opencode-copilot-manual.md) — install, config, provider, trust, doctor
+- [Greenfield Walkthrough](greenfield-walkthrough.md) — the companion guide, for a brand-new project
+- [Workflow Profiles](workflow-profiles.md)
+- [Scopes, Depth, and Test Strategy](05-scopes-and-depth.md)
+- [Spaces and Intents](03-spaces-and-intents.md)
+- [Worked Examples](16-worked-examples.md)
+- [Your First Workflow](02-your-first-workflow.md)
+- [Artifacts Reference](14-artifacts-reference.md)

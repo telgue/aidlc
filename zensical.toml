@@ -57,7 +57,10 @@ nav = [
     { "Help and Examples" = [
       "guide/15-troubleshooting.md",
       "guide/16-worked-examples.md",
+      "guide/greenfield-walkthrough.md",
+      "guide/brownfield-walkthrough.md",
       "guide/copilot-agent-evaluation-walkthrough.md",
+      "guide/opencode-copilot-manual.md",
       "guide/workshop-mode.md",
       "guide/glossary.md",
     ] },

@@ -17,7 +17,7 @@ detects** during Initialization, and it shapes the workflow in four ways:
    regress, which changes how much Construction autonomy is defensible.
 
 > Prerequisite: your project is already installed and configured. If not, work
-> through `manual.md` first (install → `aidlc config` → provider → trust →
+> through `opencode-copilot-manual.md` first (install → `aidlc config` → provider → trust →
 > `aidlc doctor`).
 
 ---
@@ -57,7 +57,7 @@ aidlc doctor
 ```
 
 `aidlc doctor` must be clean on trust and hook PATH before you start — see
-`manual.md` Steps 3–4. On greenfield there is no test suite to baseline, so this
+`opencode-copilot-manual.md` Steps 3–4. On greenfield there is no test suite to baseline, so this
 health check is the whole of your pre-flight.
 
 ---
@@ -116,9 +116,15 @@ fresh start. Two options:
 
 ```bash
 # 1. Hand-edit the **Project Type** line in <record>/aidlc-state.md, or
-# 2. Remove the scaffold, then re-initialize:
-/aidlc --init --force
+# 2. Remove the scaffold, then describe the work again so a fresh intent is
+#    minted and detection re-runs:
+/aidlc Build <describe your project>
 ```
+
+Project Type is decided by the `workspace-detection` stage when an intent is
+created, and intents are auto-created the first time you describe work. Running
+detection again therefore means starting a new intent against the cleaned tree
+— there is no separate re-initialize command.
 
 ---
 
@@ -426,7 +432,7 @@ package manifest, and source directories. The next intent will classify as
 - Brownfield safeguards will activate around code modification
 
 That is correct and intended. From your second intent onward, follow
-`brownfield-guide.md`.
+`brownfield-walkthrough.md`.
 
 To make that transition smooth, before you finish this workflow:
 
@@ -548,11 +554,11 @@ the screen can never contradict the stage's own compiled condition.
 
 ## Reference
 
-- `manual.md` — install, config, provider, trust, doctor
-- `brownfield-guide.md` — the guide for every intent after your first
-- [Workflow Profiles](docs/guide/workflow-profiles.md)
-- [Scopes, Depth, and Test Strategy](docs/guide/05-scopes-and-depth.md)
-- [Spaces and Intents](docs/guide/03-spaces-and-intents.md)
-- [Your First Workflow](docs/guide/02-your-first-workflow.md)
-- [Worked Examples](docs/guide/16-worked-examples.md)
-- [Artifacts Reference](docs/guide/14-artifacts-reference.md)
+- [opencode and GitHub Copilot Manual](opencode-copilot-manual.md) — install, config, provider, trust, doctor
+- [Brownfield Walkthrough](brownfield-walkthrough.md) — the guide for every intent after your first
+- [Workflow Profiles](workflow-profiles.md)
+- [Scopes, Depth, and Test Strategy](05-scopes-and-depth.md)
+- [Spaces and Intents](03-spaces-and-intents.md)
+- [Your First Workflow](02-your-first-workflow.md)
+- [Worked Examples](16-worked-examples.md)
+- [Artifacts Reference](14-artifacts-reference.md)

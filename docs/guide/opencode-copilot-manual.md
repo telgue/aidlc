@@ -1119,9 +1119,9 @@ aidlc config --dry-run
 
 ## Further reading
 
-- [`docs/guide/harnesses/opencode.md`](docs/guide/harnesses/opencode.md)
-- [`docs/guide/harnesses/copilot.md`](docs/guide/harnesses/copilot.md)
-- [`docs/guide/01-getting-started.md`](docs/guide/01-getting-started.md)
-- [`docs/guide/02-your-first-workflow.md`](docs/guide/02-your-first-workflow.md)
-- [`docs/guide/workflow-profiles.md`](docs/guide/workflow-profiles.md)
-- [`docs/guide/18-install-and-lifecycle.md`](docs/guide/18-install-and-lifecycle.md)
+- [`docs/guide/harnesses/opencode.md`](harnesses/opencode.md)
+- [`docs/guide/harnesses/copilot.md`](harnesses/copilot.md)
+- [`docs/guide/01-getting-started.md`](01-getting-started.md)
+- [`docs/guide/02-your-first-workflow.md`](02-your-first-workflow.md)
+- [`docs/guide/workflow-profiles.md`](workflow-profiles.md)
+- [`docs/guide/18-install-and-lifecycle.md`](18-install-and-lifecycle.md)
