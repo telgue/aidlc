@@ -73,61 +73,6 @@ The installer places the native `aidlc` command plus every harness runtime. It
 needs neither Bun nor Node.js. If a new shell cannot find `aidlc`, apply the
 PATH line the installer printed.
 
-#### If `curl` fails with a certificate error
-
-On a managed corporate machine this step commonly fails:
-
-```text
-curl: (60) SSL certificate problem: unable to get local issuer certificate
-```
-
-Nothing is wrong with the release. A TLS-inspecting proxy (Zscaler, Netskope,
-and similar) re-signs `release-assets.githubusercontent.com`, which is where
-GitHub redirects release downloads. Its root CA is trusted by your **operating
-system**, but tools that bundle their own OpenSSL — Anaconda's `curl`, for
-instance — never read the OS trust store, so verification fails.
-
-Confirm the diagnosis by following the redirect and reading the issuer:
-
-```bash
-/usr/bin/curl -sSI https://github.com/telgue/aidlc/releases/latest/download/install.sh | grep -i '^location:'
-echo | openssl s_client -connect release-assets.githubusercontent.com:443 \
-  -servername release-assets.githubusercontent.com 2>/dev/null | grep -E '^ *[0-9]+ s:|^ *i:'
-```
-
-A corporate issuer (rather than Let's Encrypt or DigiCert) confirms
-interception. The quick fix is to use the system `curl`, which does read the OS
-trust store:
-
-```bash
-/usr/bin/curl -fsSL https://github.com/telgue/aidlc/releases/latest/download/install.sh | sh
-```
-
-The durable fix is a CA bundle that contains both public and corporate roots.
-**Persist it in your shell profile** — otherwise the failure returns in every
-new terminal, including the ones the installer and `aidlc` spawn:
-
-```bash
-mkdir -p ~/.certs
-/usr/bin/curl -fsSL https://curl.se/ca/cacert.pem -o /tmp/public-roots.pem
-security find-certificate -a -p /Library/Keychains/System.keychain > /tmp/os-roots.pem
-security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> /tmp/os-roots.pem
-cat /tmp/public-roots.pem /tmp/os-roots.pem > ~/.certs/ca-bundle.pem
-
-cat >> ~/.zshrc <<'EOF'
-export CURL_CA_BUNDLE="$HOME/.certs/ca-bundle.pem"
-export SSL_CERT_FILE="$HOME/.certs/ca-bundle.pem"
-export REQUESTS_CA_BUNDLE="$HOME/.certs/ca-bundle.pem"
-export NODE_EXTRA_CA_CERTS="$HOME/.certs/ca-bundle.pem"
-EOF
-source ~/.zshrc
-```
-
-(The `security` lines are macOS; on Linux use your distribution's
-`/etc/ssl/certs/ca-certificates.crt` or the corporate root your IT team
-publishes.) This also fixes `pip`, `requests`, `git`, and Node behind the same
-proxy.
-
 ### Step 3. Create and configure the project
 
 ```bash
