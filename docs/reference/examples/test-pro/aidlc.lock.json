@@ -14,8 +14,8 @@
   "plugins": {
     "test-pro": {
       "version": "0.1.0",
-      "source": "github:awslabs/aidlc-plugin-test-pro",
-      "resolved": "https://github.com/awslabs/aidlc-plugin-test-pro.git",
+      "source": "github:telgue/aidlc-plugin-test-pro",
+      "resolved": "https://github.com/telgue/aidlc-plugin-test-pro.git",
       "commit": "1111111111111111111111111111111111111111",
       "integrity": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "dependencies": ["core"],

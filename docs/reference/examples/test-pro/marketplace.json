@@ -7,7 +7,7 @@
       "name": "test-pro",
       "description": "Full-featured testing plugin — unit/branch coverage, functional, integration, regression, edge, and API positive+negative.",
       "source": "github",
-      "repo": "awslabs/aidlc-plugin-test-pro",
+      "repo": "telgue/aidlc-plugin-test-pro",
       "version": "0.1.0"
     },
     {

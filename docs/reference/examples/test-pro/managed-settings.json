@@ -9,7 +9,7 @@
       },
       {
         "source": "github",
-        "repo": "awslabs/aidlc-plugin-test-pro",
+        "repo": "telgue/aidlc-plugin-test-pro",
         "$comment": "plus this one specific first-party plugin"
       }
     ],
